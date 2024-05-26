@@ -2,7 +2,7 @@ import numpy as np
 from collections import Counter
 
 class Node:
-    def __init__(self, feature=None, threshold=None, left=None, right=None,*,value=None):
+    def __init__(self, feature=None, threshold=None, left=None, right=None, *, value=None):
         self.feature = feature
         self.threshold = threshold
         self.left = left
@@ -12,38 +12,44 @@ class Node:
     def is_leaf_node(self):
         return self.value is not None
 
-
 class DecisionTree:
-    def __init__(self, min_samples_split=2, max_depth=100, n_features=None):
-        self.min_samples_split=min_samples_split
-        self.max_depth=max_depth
-        self.n_features=n_features
-        self.root=None
+    def __init__(self, min_samples_split=2, max_depth=100, n_features=None, task='classification'):
+        self.min_samples_split = min_samples_split
+        self.max_depth = max_depth
+        self.n_features = n_features
+        self.task = task
+        self.root = None
 
     def fit(self, X, y):
-        self.n_features = X.shape[1] if not self.n_features else min(X.shape[1],self.n_features)
+        self.n_features = X.shape[1] if not self.n_features else min(X.shape[1], self.n_features)
         self.root = self._grow_tree(X, y)
 
     def _grow_tree(self, X, y, depth=0):
         n_samples, n_feats = X.shape
         n_labels = len(np.unique(y))
 
-        # check the stopping criteria
-        if (depth>=self.max_depth or n_labels==1 or n_samples<self.min_samples_split):
-            leaf_value = self._most_common_label(y)
+        # Check the stopping criteria
+        if (depth >= self.max_depth or n_labels == 1 or n_samples < self.min_samples_split):
+            leaf_value = self._calculate_leaf_value(y)
             return Node(value=leaf_value)
 
         feat_idxs = np.random.choice(n_feats, self.n_features, replace=False)
 
-        # find the best split
+        # Find the best split
         best_feature, best_thresh = self._best_split(X, y, feat_idxs)
 
-        # create child nodes
-        left_idxs, right_idxs = self._split(X[:, best_feature], best_thresh)
-        left = self._grow_tree(X[left_idxs, :], y[left_idxs], depth+1)
-        right = self._grow_tree(X[right_idxs, :], y[right_idxs], depth+1)
-        return Node(best_feature, best_thresh, left, right)
+        if best_feature is None or best_thresh is None:
+            leaf_value = self._calculate_leaf_value(y)
+            return Node(value=leaf_value)
 
+        # Create child nodes
+        left_idxs, right_idxs = self._split(X[:, best_feature], best_thresh)
+        if len(left_idxs) == 0 or len(right_idxs) == 0:
+            leaf_value = self._calculate_leaf_value(y)
+            return Node(value=leaf_value)
+        left = self._grow_tree(X[left_idxs, :], y[left_idxs], depth + 1)
+        right = self._grow_tree(X[right_idxs, :], y[right_idxs], depth + 1)
+        return Node(best_feature, best_thresh, left, right)
 
     def _best_split(self, X, y, feat_idxs):
         best_gain = -1
@@ -54,35 +60,37 @@ class DecisionTree:
             thresholds = np.unique(X_column)
 
             for thr in thresholds:
-                # calculate the information gain
                 gain = self._information_gain(y, X_column, thr)
 
                 if gain > best_gain:
+                    left_idxs, right_idxs = self._split(X_column, thr)
+                    if len(left_idxs) == 0 or len(right_idxs) == 0:
+                        continue
                     best_gain = gain
                     split_idx = feat_idx
                     split_threshold = thr
 
         return split_idx, split_threshold
 
-
     def _information_gain(self, y, X_column, threshold):
-        # parent entropy
-        parent_entropy = self._entropy(y)
+        if self.task == 'classification':
+            parent_loss = self._entropy(y)
+        else:
+            parent_loss = self._variance(y)
 
-        # create children
         left_idxs, right_idxs = self._split(X_column, threshold)
-
         if len(left_idxs) == 0 or len(right_idxs) == 0:
             return 0
-        
-        # calculate the weighted avg. entropy of children
+
         n = len(y)
         n_l, n_r = len(left_idxs), len(right_idxs)
-        e_l, e_r = self._entropy(y[left_idxs]), self._entropy(y[right_idxs])
-        child_entropy = (n_l/n) * e_l + (n_r/n) * e_r
+        if self.task == 'classification':
+            e_l, e_r = self._entropy(y[left_idxs]), self._entropy(y[right_idxs])
+        else:
+            e_l, e_r = self._variance(y[left_idxs]), self._variance(y[right_idxs])
+        child_loss = (n_l / n) * e_l + (n_r / n) * e_r
 
-        # calculate the IG
-        information_gain = parent_entropy - child_entropy
+        information_gain = parent_loss - child_loss
         return information_gain
 
     def _split(self, X_column, split_thresh):
@@ -93,8 +101,16 @@ class DecisionTree:
     def _entropy(self, y):
         hist = np.bincount(y)
         ps = hist / len(y)
-        return -np.sum([p * np.log(p) for p in ps if p>0])
+        return -np.sum([p * np.log(p) for p in ps if p > 0])
 
+    def _variance(self, y):
+        return np.var(y)
+
+    def _calculate_leaf_value(self, y):
+        if self.task == 'classification':
+            return self._most_common_label(y)
+        else:
+            return np.mean(y)
 
     def _most_common_label(self, y):
         counter = Counter(y)
@@ -111,5 +127,3 @@ class DecisionTree:
         if x[node.feature] <= node.threshold:
             return self._traverse_tree(x, node.left)
         return self._traverse_tree(x, node.right)
-        
-
